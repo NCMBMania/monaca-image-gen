@@ -3,7 +3,7 @@
     <div class="navbar"> <!-- ナビゲーションバー -->
       <div class="navbar-bg"></div>
       <div class="navbar-inner sliding">
-        <div class="title">AIチャット</div> <!-- タイトル -->
+        <div class="title">AI画像生成</div> <!-- タイトル -->
       </div>
     </div>
     <div class="toolbar messagebar"> <!-- メッセージツールバー -->
@@ -26,72 +26,96 @@
   </div>
 </template>
 <script>
-export default (props, { $f7, $onMounted, $store, $update, $tick }) => {
-  const Chat = ncmb.DataStore("Chat"); // データストア"Chat"の生成
-  let messages; // メッセージを表示するための変数
-  let messageBar; // メッセージを入力するための変数
-  const chats = []; // チャット履歴を保持するための配列
-  $onMounted(async () => { // コンポーネントがマウントされたときに実行される関数
-    messages = $f7.messages.create({ // messagesの初期化
-      el: $('.messages'), // 表示する要素
+// コンポーネントをエクスポートするデフォルト関数。
+// この関数は、"props"と"$f7"と"$onMounted"を含むオブジェクトを引数に取ります。
+export default (props, { $f7, $onMounted }) => {
+
+  // "ImageGen"というデータストアオブジェクトを初期化する。
+  const ImageGen = ncmb.DataStore("ImageGen");
+
+  // メッセージコンテナとメッセージ入力バーを保持する変数を宣言する。
+  let messages;
+  let messageBar;
+
+  // コンポーネントがマウントされた時に、メッセージコンテナとメッセージ入力バーを作成し、
+  // 過去のメッセージを表示する。
+  $onMounted(async () => {
+    messages = $f7.messages.create({
+      el: $('.messages'),
     });
-    messageBar = $f7.messagebar.create({ // messageBarの初期化
-      el: $('.messagebar'), // 入力する要素
-      attachments: [] // 添付ファイルの初期値
+    messageBar = $f7.messagebar.create({
+      el: $('.messagebar'),
+      attachments: []
     });
+    // データは昨日以降を対象とする
     const date = new Date;
     date.setDate(date.getDate() - 1);
-    const ary = await Chat
-      .greaterThanOrEqualTo('createDate', date) // createDateが指定日以降のデータを取得
-      .fetchAll(); // 取得した全てのデータを配列で取得
-    ary.forEach(chat => addMessage(chat)); // 取得したデータをメッセージ表示エリアに追加
-    $update(); // レンダリングの更新
+    // データストアからデータを取得する
+    const ary = await ImageGen
+      .greaterThanOrEqualTo('createDate', date)
+      .fetchAll();
+    // データをチャット画面に表示する
+    for (const imageGen of ary) {
+      await addMessage(imageGen);
+    }
   });
 
-  const addMessage = (chat) => { // メッセージ表示エリアにメッセージを追加する関数
-    messages.addMessage({ // メッセージを追加
-      text: chat.content, // メッセージの内容
-      type: chat.role === 'user' ? 'sent' : 'received', // メッセージの送信元
-      name: chat.role === 'user' ? 'Me': 'Chat GPT', // メッセージの送信先
-      avatar: chat.role === 'user' ? '/assets/icons/person.png' : '/assets/icons/robot.png', // アバター画像
+  // メッセージをメッセージコンテナに追加する非同期関数。
+  const addMessage = async (imageGen) => {
+    // テキスト部分
+    messages.addMessage({
+      type: 'sent',
+      avatar: '/assets/icons/person.png',
+      name: 'Me',
+      text: imageGen.content,
     });
-    chats.push(chat); // チャット履歴に追加
-  };
-  const saveChat = (role, content) => { // チャットを保存する関数
-    const chat = new Chat(); // 新しいチャットを生成
-    return chat
-      .set('content', content) // チャットの内容を設定
-      .set('role', role) // チャットの送信元を設定
-      .save(); // チャットを保存
-  };
-  const send = async () => { // メッセージ送信のイベントハンドラ
-    const content = messageBar.getValue().replace(/\n/g, '<br />').trim(); // 入力されたメッセージを取得
-    if (content === '') return; // メッセージが空の場合は送信しない
-    const chat = await saveChat('user', content); // チャットを保存
-    addMessage(chat); // メッセージ表示エリアにメッセージを追加
-    $update(); // レンダリングの更新
-    await $tick(); // レンダリングの完了を待つ
-    // ここからAIチャット
-    const pastMessages = chats.map(chat => { // チャット履歴をAIに送信するための配列を作成
-      return {
-        role: chat.role,
-        content: chat.content,
-      };
+    // 画像がなければ終了
+    if (!imageGen.image) return;
+    // 画像のダウンロード
+    const blob = await ncmb.File.download(imageGen.image, 'blob');
+    // BlobからURLを作成
+    const url = URL.createObjectURL(blob);
+    // 画像を表示
+    messages.addMessage({
+      type: 'received',
+      avatar: '/assets/icons/robot.png',
+      name: 'Gen',
+      imageSrc: url,
     });
-    messages.showTyping(); // タイピング中の表示
-    const res = await ncmb.Script // テキスト生成スクリプトを実行
+  };
+
+  // メッセージを送信するための非同期関数。
+  const send = async () => {
+    // メッセージ入力バーからテキストを取得し、改行を<br />に変換する。
+    const prompt = messageBar.getValue().replace(/\n/g, '<br />').trim();
+    // テキストが空なら終了
+    if (prompt === '') return;
+    // データストアのオブジェクトを作成
+    const imageGen = new ImageGen();
+    // 入力されていた文字列をセット
+    imageGen.set('content', prompt);
+    // メッセージを送信中にする
+    messages.showTyping();
+    // 入力文字から画像を生成する
+    const res = await ncmb.Script
       .data({
-        content,
-        messages: pastMessages,
+        prompt,
       })
-      .exec("POST", "text.js");
-    const { text } = JSON.parse(res.body); // スクリプトの結果を取得
-    const aiChat = await saveChat('assistant', text); // AIの返答を保存
-    addMessage(aiChat); // メッセージ表示エリアにAIの返答を追加
-    $update(); // レンダリングの更新
-    messageBar.clear(); // 入力欄をクリア
-    messages.hideTyping(); // タイピング中の表示を非表示にする
+      .exec("POST", "image.js");
+    // 生成した画像のファイル名を取得
+    const { fileName } = JSON.parse(res.body);
+    // 画像のファイル名をセット
+    imageGen.set('image', fileName);
+    // データストアに保存
+    await imageGen.save();
+    // メッセージをチャット画面に表示
+    addMessage(imageGen);
+    // メッセージ入力バーをクリア
+    messageBar.clear();
+    // メッセージの送信中表示をやめる
+    messages.hideTyping();
   };
+
   return $render;
 }
 </script>
